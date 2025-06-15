@@ -1,0 +1,10 @@
+# Файлы логов
+*.log
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Данные Scrapy (если есть)
+data/

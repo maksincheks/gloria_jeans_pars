@@ -20,3 +20,4 @@ class ProductItem(DynamicItem):
     code = Field()
     description = Field()
     images = Field()
+    specifications = Field()  # Добавлено новое поле для характеристик

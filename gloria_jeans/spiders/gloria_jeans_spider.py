@@ -107,25 +107,33 @@ class GloriaJeansSpider(scrapy.Spider):
         item['categories'] = [response.meta['category']]
         item['timestamp'] = datetime.now().isoformat()
 
-        item['name'] = response.css('h1.product-info__title::text').get('').strip()
+        # XPath селекторы
+        item['name'] = response.xpath("//h1[contains(@class, 'product-info__title')]/text()").get('').strip()
 
-        price = response.css('span.price-with-sale__new::text').get() or \
-                response.css('span.product-price__current::text').get()
+        price = response.xpath("//span[contains(@class, 'price-with-sale__new')]/text()").get()
         try:
             item['price'] = float(price.replace(' ', '').replace('₽', '').strip()) if price else None
         except (ValueError, AttributeError):
             item['price'] = None
 
-        item['code'] = response.css('div.more-details-popup__icon--flex::text').get('').strip()
+        item['code'] = response.xpath("//div[contains(@class, 'more-details-popup__icon--flex')]/text()").get(
+            '').strip()
 
-        description = response.css('div.product-description ::text').getall()
-        item['description'] = ' '.join(description).strip() if description else None
+        description = response.xpath("//div[contains(@class, 'product-description')]//text()").getall()
+        item['description'] = ' '.join([t.strip() for t in description if t.strip()]) or None
 
-        item['images'] = response.css('img.product-image::attr(src), div.product-image img::attr(src)').getall()
-        item['images'] = [urljoin(response.url, img) for img in item['images']]
+        specs = response.xpath(
+            '//div[contains(@class, "more-details-popup_") and contains(@class, "info-table")]//text()').getall()
+        item['specifications'] = [spec.strip() for spec in specs if spec.strip()] or None
+
+        item['images'] = [
+            urljoin(response.url, img)
+            for img in response.xpath('//gj-image/picture/img/@src').getall()
+            if img
+        ]
 
         if not item['name'] or not item['price']:
-            self.logger.warning(f"Отсутствуют данные для {response.url}")
+            self.logger.warning(f"Отсутствуют ключевые данные для {response.url}")
             return
 
         yield item

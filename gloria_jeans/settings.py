@@ -1,4 +1,5 @@
 import random
+import os
 
 BOT_NAME = 'gloria_jeans'
 SPIDER_MODULES = ['gloria_jeans.spiders']
@@ -55,3 +56,20 @@ DUPEFILTER_DEBUG = True
 UPDATE_COOKIE_URL = 'https://www.gloria-jeans.ru/'
 UPDATE_COOKIES_EVERY_S = 300
 DRIVER_UPDATE_WAIT_TIME = 30
+
+# Категории для парсинга
+CATEGORIES = {
+    'girls': 'Женщины',
+    'boys': 'Мужчины',
+    'teenagers': 'Подростки',
+    'kids': 'Дети',
+    'sale': 'Скидки'
+}
+
+# Базовые URL
+BASE_URL = 'https://www.gloria-jeans.ru/'
+CATALOG_URL = 'https://www.gloria-jeans.ru/catalog/'
+
+# Настройки Chrome
+CHROME_DRIVER_PATH = os.path.join(os.getenv('APPDATA'), 'undetected_chromedriver', 'undetected_chromedriver.exe')
+CHROME_BROWSER_PATH = r'C:\Program Files\Google\Chrome\Application\chrome.exe'

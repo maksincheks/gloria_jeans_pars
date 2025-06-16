@@ -55,15 +55,18 @@ class WebdriverCookieMiddleware:
                 try:
                     self.driver.quit()
                 except Exception as e:
-                    self.logger.error(f"Ошибка при закрытии старого драйвера: {str(e)}")
+                    self.logger.exception("Ошибка при закрытии старого драйвера: %s", str(e))
 
             options = self._initialize_options()
+
             self.driver = uc.Chrome(
+                version_main=137,  # явно указываем версию Chrome
                 options=options,
-                version_main=137  # Указываем основную версию Chrome
+                driver_executable_path=r'C:\Users\maksi\AppData\Roaming\undetected_chromedriver\undetected_chromedriver.exe',
+                browser_executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                use_subprocess=True
             )
 
-            # Скрытие автоматизации
             self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
                 'source': '''
                     Object.defineProperty(navigator, 'webdriver', {
@@ -74,13 +77,25 @@ class WebdriverCookieMiddleware:
 
             self.logger.info("WebDriver успешно инициализирован")
             return True
-        except Exception as e:
-            self.logger.error(f"Ошибка инициализации WebDriver: {str(e)}")
+        except OSError as e:
+            if "14001" in str(e):
+                self.logger.exception("Ошибка зависимостей Windows. Установите Visual C++ Redistributable: %s", str(e))
+            else:
+                self.logger.exception("Ошибка инициализации WebDriver: %s", str(e))
+
             if hasattr(self, 'driver') and self.driver is not None:
                 try:
                     self.driver.quit()
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.exception("Ошибка при закрытии драйвера: %s", str(e))
+            return False
+        except Exception as e:
+            self.logger.exception("Непредвиденная ошибка при инициализации WebDriver: %s", str(e))
+            if hasattr(self, 'driver') and self.driver is not None:
+                try:
+                    self.driver.quit()
+                except Exception as e:
+                    self.logger.exception("Ошибка при закрытии драйвера: %s", str(e))
             return False
 
     def update_cookies(self):
@@ -88,18 +103,17 @@ class WebdriverCookieMiddleware:
             if not self._initialize_driver():
                 raise Exception("Не удалось инициализировать WebDriver")
 
-            self.logger.info(f"Попытка доступа к: {self.url}")
+            self.logger.info("Попытка доступа к URL: %s", self.url)
 
             self.driver.get(self.url)
 
             WebDriverWait(self.driver, self.driver_wait_time).until(
                 EC.presence_of_element_located((By.TAG_NAME, 'body')))
 
-            # Случайная задержка для имитации пользователя
             time.sleep(random.uniform(2, 5))
 
             if "gloria-jeans" not in self.driver.current_url:
-                raise Exception("Не удалось загрузить правильную страницу")
+                raise Exception("Не удалось загрузить правильную страницу. Текущий URL: %s", self.driver.current_url)
 
             cookies = self.driver.get_cookies()
             if not cookies:
@@ -122,12 +136,12 @@ class WebdriverCookieMiddleware:
             return True
 
         except Exception as e:
-            self.logger.error(f"Ошибка обновления cookies: {str(e)}")
+            self.logger.exception("Ошибка при обновлении cookies: %s", str(e))
             if hasattr(self, 'driver') and self.driver is not None:
                 try:
                     self.driver.quit()
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.exception("Ошибка при закрытии драйвера: %s", str(e))
             return False
 
     def process_request(self, request, spider):
@@ -143,7 +157,7 @@ class WebdriverCookieMiddleware:
             retry_count += 1
             time.sleep(10)
         else:
-            spider.logger.error("Не удалось обновить cookies после попыток")
+            spider.logger.error("Не удалось обновить cookies после %d попыток", max_retries)
             return None
 
         request.cookies = self.cookies
@@ -155,7 +169,7 @@ class WebdriverCookieMiddleware:
             try:
                 self.driver.quit()
             except Exception as e:
-                self.logger.error(f"Ошибка при закрытии драйвера: {str(e)}")
+                self.logger.exception("Ошибка при закрытии драйвера: %s", str(e))
 
     @classmethod
     def from_crawler(cls, crawler):

@@ -28,6 +28,9 @@ LOG_LEVEL = 'INFO'
 LOG_FILE = 'gloria_jeans.log'
 LOG_FILE_APPEND = False
 
+COOKIES_ENABLED = True
+COOKIES_DEBUG = True  # для отладки
+
 # Категории для парсинга
 CATEGORIES = {
     'girls': 'Для девочек',

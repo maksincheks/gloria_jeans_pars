@@ -1,180 +1,141 @@
 import scrapy
-from urllib.parse import urljoin
-from gloria_jeans.items import ProductItem
+import json
 from datetime import datetime
+from urllib.parse import urljoin
 from scrapy.utils.project import get_project_settings
-from scrapy.exceptions import CloseSpider
-from twisted.internet.error import TimeoutError, TCPTimedOutError
-from scrapy.spidermiddlewares.httperror import HttpError
-from twisted.web._newclient import ResponseNeverReceived
-from scrapy.utils.response import response_status_message
 
 
 class GloriaJeansSpider(scrapy.Spider):
     name = 'gloria_jeans'
-    allowed_domains = ['gloria-jeans.ru']
-    start_urls = ['https://www.gloria-jeans.ru/']
+    allowed_domains = ['gloria-jeans.ru', 'api-web.gloria-jeans.ru']
+    api_url = 'https://api-web.gloria-jeans.ru/api/v1/catalog/products'
+    product_api_url = 'https://api-web.gloria-jeans.ru/api/v1/catalog/product'
+    region_id = '0c5b2444-70a0-4932-980c-b4dc0d3f02b5'  # Москва
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.settings = get_project_settings()
-        self.categories = self.settings.get("CATEGORIES")
-        self.base_url = self.settings.get("BASE_URL")
-        self.catalog_url = self.settings.get("CATALOG_URL")
-        self.failed_urls = []
-        self.retry_delays = [30, 60, 120, 240]
+    custom_headers = {
+        'accept': 'application/json, text/plain, */*',
+        'accept-language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+        'content-type': 'application/json',
+        'origin': 'https://www.gloria-jeans.ru',
+        'referer': 'https://www.gloria-jeans.ru/',
+        'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not=A?Brand";v="24"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36',
+    }
 
-    def parse(self, response):
-        for category_id, category_name in self.categories.items():
-            category_url = f"{self.catalog_url}{category_id}"
-            yield scrapy.Request(
-                url=category_url,
-                callback=self.parse_category,
-                meta={
-                    'category': category_name,
-                    'category_id': category_id,
-                    'page': 1
+    def start_requests(self):
+        categories = get_project_settings().get("CATEGORIES", {})
+
+        for category_id, category_name in categories.items():
+            payload = {
+                'categoryCode': category_id,
+                'sort': 'new',
+                'filters': {
+                    'productCategories': [],
+                    'targetCategories': [],
+                    'targetAdditionalCategories': [],
+                    'typeId': [],
+                    'collectionId': [],
+                    'labels': [],
+                    'multiProperties': [],
+                    'minPrice': None,
+                    'maxPrice': None,
+                    'size': [],
+                    'color': [],
+                    'growth': [],
+                    'childAge': [],
+                    'male': [],
+                    'shopId': [],
                 },
+                'pagination': {
+                    'limit': 100,
+                    'page': 1,
+                },
+                'regionId': self.region_id,
+                'cityId': self.region_id,
+            }
+
+            yield scrapy.Request(
+                url=self.api_url,
+                method='POST',
+                headers=self.custom_headers,
+                body=json.dumps(payload),
+                callback=self.parse_category,
+                meta={'category': category_name, 'page': 1},
                 errback=self.handle_error
             )
 
     def parse_category(self, response):
-        product_cards = response.xpath("//div[contains(@class, 'product-mini-card') and contains(@class, 'ng-star-inserted')]").getall()
-        self.logger.info(f"Найдено карточек товаров: {len(product_cards)}, ссылок: {len(product_links)}")
-        if product_cards:
-            product_links = response.css('a.product-card__link::attr(href)').getall()
-            if not product_links:
-                product_links = response.css('div.product-card a::attr(href)').getall()
+        try:
+            data = json.loads(response.text)
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON response from {response.url}")
+            return
 
-            for link in product_links:
-                product_url = urljoin(self.base_url, link)
-                yield scrapy.Request(
-                    url=product_url,
-                    callback=self.parse_product,
-                    meta={'category': response.meta['category']},
-                    errback=self.handle_error
-                )
+        products = data.get('products', [])
+        self.logger.info(f"Found {len(products)} products in category {response.meta['category']}")
 
-        current_page = response.meta.get('page', 1)
-        next_page = current_page + 1
-        next_page_url = f"{self.catalog_url}{response.meta['category_id']}?page={next_page}"
-
-        if product_cards:
+        for product in products:
+            product_url = f"{self.product_api_url}?vendorCodeCc={product['vendorCodeCc']}&regionId={self.region_id}&cityId={self.region_id}"
             yield scrapy.Request(
-                url=next_page_url,
+                url=product_url,
+                headers=self.custom_headers,
+                callback=self.parse_product,
+                meta={'category': response.meta['category']},
+                errback=self.handle_error
+            )
+
+        # Pagination
+        if products and len(products) == 100:
+            next_page = response.meta['page'] + 1
+            payload = json.loads(response.request.body)
+            payload['pagination']['page'] = next_page
+
+            yield scrapy.Request(
+                url=self.api_url,
+                method='POST',
+                headers=self.custom_headers,
+                body=json.dumps(payload),
                 callback=self.parse_category,
-                meta={
-                    'category': response.meta['category'],
-                    'category_id': response.meta['category_id'],
-                    'page': next_page
-                },
+                meta={'category': response.meta['category'], 'page': next_page},
                 errback=self.handle_error
             )
 
     def parse_product(self, response):
-        if self._is_blocked(response):
-            self.logger.warning("Обнаружена блокировка для URL: %s", response.url)
-            yield from self._handle_blocked(response)
-            return
-
-        item = ProductItem()
-        item['url'] = response.url
-        item['categories'] = [response.meta['category']]
-        item['timestamp'] = datetime.now().isoformat()
-
-        item['name'] = response.xpath("//h1[contains(@class, 'product-info__title')]/text()").get('').strip()
-
-        price = response.xpath("//span[contains(@class, 'price-with-sale__new')]/text()").get()
         try:
-            item['price'] = float(price.replace(' ', '').replace('₽', '').strip()) if price else None
-        except (ValueError, AttributeError) as e:
-            self.logger.warning("Ошибка парсинга цены для %s: %s", response.url, str(e))
-            item['price'] = None
-
-        item['code'] = response.xpath("//div[contains(@class, 'more-details-popup__icon--flex')]/text()").get('').strip()
-
-        description = response.xpath("//div[contains(@class, 'product-description') and contains(@class, 'ng-star-inserted')]//span[contains(@class, 'gjblocksizes')]//text()").getall()
-        item['description'] = ' '.join([t.strip() for t in description if t.strip()]) or None
-
-        specs = response.xpath('//div[contains(@class, "more-details-popup_") and contains(@class, "info-table")]//text()').getall()
-        item['specifications'] = [spec.strip() for spec in specs if spec.strip()] or None
-
-        item['images'] = [
-            urljoin(response.url, img)
-            for img in response.xpath('//gj-image/picture/img/@src').getall()
-            if img
-        ]
-
-        if not item['name'] or not item['price']:
-            self.logger.warning("Отсутствуют ключевые данные для URL: %s", response.url)
+            data = json.loads(response.text)
+        except json.JSONDecodeError:
+            self.logger.error(f"Invalid JSON response from {response.url}")
             return
 
+        product = data.get('product', {})
+        if not product:
+            return
+
+        item = {
+            'url': f"https://www.gloria-jeans.ru{product.get('url', '')}",
+            'categories': [response.meta['category']],
+            'timestamp': datetime.now().isoformat(),
+            'name': product.get('name', ''),
+            'price': product.get('price', {}).get('value'),
+            'old_price': product.get('oldPrice', {}).get('value'),
+            'code': product.get('vendorCodeCc', ''),
+            'color': product.get('color', ''),
+            'sizes': [size.get('value') for size in product.get('sizes', [])],
+            'composition': product.get('composition', ''),
+            'description': product.get('description', ''),
+            'images': [media['url'] for media in product.get('media', []) if media.get('type') == 'image'],
+            'attributes': [
+                f"{attr['name']}: {attr['value']}"
+                for attr in product.get('attributes', [])
+                if attr.get('name') and attr.get('value')
+            ],
+        }
         yield item
 
-    def _is_blocked(self, response):
-        blocked_indicators = [
-            "xpvnsulc" in response.url,
-            "access denied" in response.text.lower(),
-            "captcha" in response.text.lower(),
-            "доступ ограничен" in response.text.lower(),
-            response.status in [403, 429, 503],
-            "cloudflare" in response.text.lower(),
-            "security check" in response.text.lower(),
-            "DDoS protection" in response.text.lower(),
-            "bot" in response.text.lower(),
-            "Please verify you are a human" in response.text
-        ]
-        return any(blocked_indicators)
-
-    def _handle_blocked(self, response):
-        retry_times = response.meta.get('retry_times', 0)
-        max_retry_times = response.meta.get('max_retry_times', 3)
-
-        if retry_times < max_retry_times:
-            delay = self.retry_delays[min(retry_times, len(self.retry_delays) - 1)] * random.uniform(0.9, 1.1)
-            self.logger.warning(
-                "Блокировка для %s, повторная попытка через %.1fс (%d/%d)",
-                response.url, delay, retry_times + 1, max_retry_times
-            )
-            yield self._retry_request(response)
-        else:
-            self.logger.error("Достигнут максимум попыток для URL: %s", response.url)
-            self.failed_urls.append(response.url)
-
-    def _retry_request(self, response):
-        retry_times = response.meta.get('retry_times', 0) + 1
-
-        return response.request.replace(
-            meta={
-                **response.meta,
-                'retry_times': retry_times,
-                'dont_filter': True
-            }
-        )
-
     def handle_error(self, failure):
-        if failure.check(HttpError):
-            response = failure.value.response
-            if response.status == 403:
-                self.logger.warning("403 Forbidden для URL: %s", response.url)
-                yield from self._handle_blocked(response)
-                return
-
-            self.logger.error(
-                "HttpError для URL: %s. Код статуса: %d",
-                response.url,
-                response.status
-            )
-        elif failure.check(DNSLookupError):
-            self.logger.error("DNSLookupError для URL: %s", failure.request.url)
-        elif failure.check((TimeoutError, TCPTimedOutError, ResponseNeverReceived)):
-            self.logger.error("TimeoutError для URL: %s", failure.request.url)
-
-        self.failed_urls.append(failure.request.url)
-
-    def closed(self, reason):
-        self.logger.info("Паук завершил работу. Причина: %s", reason)
-        if self.failed_urls:
-            self.logger.warning("Количество неудачных URL: %d", len(self.failed_urls))
-            for url in self.failed_urls[:10]:
-                self.logger.debug("Неудачный URL: %s", url)
+        self.logger.error(f"Request failed: {failure.getErrorMessage()}")

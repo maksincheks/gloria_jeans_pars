@@ -1,4 +1,4 @@
-from scrapy import Field, Item
+from scrapy import Item, Field
 
 class ProductItem(Item):
     url = Field()
@@ -6,7 +6,11 @@ class ProductItem(Item):
     timestamp = Field()
     name = Field()
     price = Field()
+    old_price = Field()
     code = Field()
+    color = Field()
+    sizes = Field()
+    composition = Field()
     description = Field()
     images = Field()
-    specifications = Field()
+    attributes = Field()
